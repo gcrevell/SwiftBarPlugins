@@ -48,42 +48,49 @@ from datetime import datetime, timedelta
 CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 
 # Per-million-token list pricing, in USD. Cache write rates are derived from
-# input price (5m TTL = 1.25x, 1h TTL = 2x); cache read = 0.1x input price.
-# Source: Anthropic published pricing (see claude-api skill / platform.claude.com/docs/en/pricing).
+# input price (5m TTL = 1.25x, 1h TTL = 2x); cache read is 0.1x input price
+# except where Anthropic sets a lower rate (noted per group below).
+# Source: Anthropic published pricing (see claude-api skill / platform.claude.com/docs/en/about-claude/pricing).
 
 
-def _rates(input_price, output_price):
+def _rates(input_price, output_price, cache_read_multiplier=0.1):
     return {
         "input": input_price,
         "output": output_price,
         "cache_write_5m": input_price * 1.25,
         "cache_write_1h": input_price * 2.0,
-        "cache_read": input_price * 0.1,
+        "cache_read": input_price * cache_read_multiplier,
     }
 
 
-_OPUS_CURRENT = _rates(5.00, 25.00)      # Opus 5, Opus 4.8, 4.7, 4.6
-_OPUS_LEGACY = _rates(15.00, 75.00)      # Opus 4.5, 4.1, 4.0 and older
+_FABLE_5_1 = _rates(10.00, 50.00, cache_read_multiplier=0.025)  # Fable 5.1, Mythos 5.1
+_FABLE_5 = _rates(10.00, 50.00)          # Fable 5, Mythos 5
+_OPUS_5_5 = _rates(4.00, 20.00, cache_read_multiplier=0.05)     # Opus 5.5
+_OPUS_CURRENT = _rates(5.00, 25.00)      # Opus 5, Opus 4.8, 4.7, 4.6, 4.5
+_OPUS_LEGACY = _rates(15.00, 75.00)      # Opus 4.1, 4.0 and older (retired)
+_SONNET_5_5 = _rates(2.00, 10.00)        # Sonnet 5.5
+_SONNET_5 = _rates(2.00, 10.00)          # Sonnet 5 (permanent price; the planned 2026-09-01 increase to $3/$15 was cancelled)
 _SONNET_CURRENT = _rates(3.00, 15.00)    # Sonnet 4.6, 4.5, 4.0
-_SONNET_5_INTRO = _rates(2.00, 10.00)    # Sonnet 5 introductory pricing (through 2026-08-31)
-_SONNET_5_REGULAR = _rates(3.00, 15.00)  # Sonnet 5 pricing from 2026-09-01
 _HAIKU = _rates(1.00, 5.00)
-_FABLE = _rates(10.00, 50.00)            # Fable 5 / Mythos 5
-
-# Sonnet 5's intro pricing window ends 2026-08-31 (inclusive), UTC.
-_SONNET_5_INTRO_CUTOFF = datetime(2026, 9, 1, tzinfo=None)
 
 _STATIC_PRICING = {
+    "claude-fable-5-1": _FABLE_5_1,
+    "claude-mythos-5-1": _FABLE_5_1,
+    "claude-fable-5": _FABLE_5,
+    "claude-mythos-5": _FABLE_5,
+    "claude-opus-5-5": _OPUS_5_5,
     "claude-opus-5": _OPUS_CURRENT,
     "claude-opus-4-8": _OPUS_CURRENT,
     "claude-opus-4-7": _OPUS_CURRENT,
     "claude-opus-4-6": _OPUS_CURRENT,
-    "claude-opus-4-5": _OPUS_LEGACY,
-    "claude-opus-4-5-20251101": _OPUS_LEGACY,
+    "claude-opus-4-5": _OPUS_CURRENT,
+    "claude-opus-4-5-20251101": _OPUS_CURRENT,
     "claude-opus-4-1": _OPUS_LEGACY,
     "claude-opus-4-1-20250805": _OPUS_LEGACY,
     "claude-opus-4-0": _OPUS_LEGACY,
     "claude-opus-4-20250514": _OPUS_LEGACY,
+    "claude-sonnet-5-5": _SONNET_5_5,
+    "claude-sonnet-5": _SONNET_5,
     "claude-sonnet-4-6": _SONNET_CURRENT,
     "claude-sonnet-4-5": _SONNET_CURRENT,
     "claude-sonnet-4-5-20250929": _SONNET_CURRENT,
@@ -91,8 +98,6 @@ _STATIC_PRICING = {
     "claude-sonnet-4-20250514": _SONNET_CURRENT,
     "claude-haiku-4-5": _HAIKU,
     "claude-haiku-4-5-20251001": _HAIKU,
-    "claude-fable-5": _FABLE,
-    "claude-mythos-5": _FABLE,
 }
 
 TOKEN_TYPE_LABELS = [
@@ -104,9 +109,7 @@ TOKEN_TYPE_LABELS = [
 ]
 
 
-def rates_for(model, ts_utc):
-    if model == "claude-sonnet-5":
-        return _SONNET_5_INTRO if ts_utc < _SONNET_5_INTRO_CUTOFF else _SONNET_5_REGULAR
+def rates_for(model):
     return _STATIC_PRICING.get(model)
 
 
@@ -196,12 +199,8 @@ def scan_usage():
     return usage
 
 
-def model_cost(model, counts, month_key):
-    # Use the middle of the month as a representative timestamp for pricing
-    # lookups that depend on date (e.g. Sonnet 5 intro pricing).
-    year, month = (int(x) for x in month_key.split("-"))
-    approx_ts = datetime(year, month, 15)
-    rates = rates_for(model, approx_ts)
+def model_cost(model, counts):
+    rates = rates_for(model)
     if not rates:
         return 0.0
     total = 0.0
@@ -211,7 +210,7 @@ def model_cost(model, counts, month_key):
 
 
 def month_total(month_models):
-    return sum(model_cost(model, counts, mk) for mk, model, counts in month_models)
+    return sum(model_cost(model, counts) for _mk, model, counts in month_models)
 
 
 def fmt_usd(amount):
@@ -252,7 +251,7 @@ def main():
     current_total = 0.0
     if current_month_key in usage:
         for model, counts in usage[current_month_key].items():
-            current_total += model_cost(model, counts, current_month_key)
+            current_total += model_cost(model, counts)
 
     print("\U0001F916 {}".format(fmt_usd(current_total)))
     print("---")
@@ -265,7 +264,7 @@ def main():
         month_data = usage.get(month_key, {})
         total = 0.0
         for model, counts in month_data.items():
-            total += model_cost(model, counts, month_key)
+            total += model_cost(model, counts)
 
         label = month_label(month_key)
         if month_key == current_month_key:
@@ -275,15 +274,15 @@ def main():
         if not month_data:
             print("--No usage recorded | size=11 color=gray")
         else:
-            for model in sorted(month_data.keys(), key=lambda m: -model_cost(m, month_data[m], month_key)):
+            for model in sorted(month_data.keys(), key=lambda m: -model_cost(m, month_data[m])):
                 counts = month_data[model]
-                cost = model_cost(model, counts, month_key)
+                cost = model_cost(model, counts)
                 print("--{} — {} | size=12".format(model, fmt_usd(cost)))
                 for token_type, token_label in TOKEN_TYPE_LABELS:
                     count = counts.get(token_type, 0)
                     if count == 0:
                         continue
-                    rates = rates_for(model, datetime(*(int(x) for x in month_key.split("-")), 15))
+                    rates = rates_for(model)
                     rate = rates.get(token_type, 0.0) if rates else 0.0
                     line_cost = (count / 1_000_000.0) * rate
                     print(
