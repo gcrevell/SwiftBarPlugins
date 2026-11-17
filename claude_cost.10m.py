@@ -71,7 +71,8 @@ _OPUS_LEGACY = _rates(15.00, 75.00)      # Opus 4.1, 4.0 and older (retired)
 _SONNET_5_5 = _rates(2.00, 10.00)        # Sonnet 5.5
 _SONNET_5 = _rates(2.00, 10.00)          # Sonnet 5 (permanent price; the planned 2026-09-01 increase to $3/$15 was cancelled)
 _SONNET_CURRENT = _rates(3.00, 15.00)    # Sonnet 4.6, 4.5, 4.0
-_HAIKU = _rates(1.00, 5.00)
+_HAIKU_5_5 = _rates(0.10, 0.50)         # Haiku 5.5 (prompts up to 100K tokens; $0.50/$2.50 beyond, not modeled)
+_HAIKU = _rates(1.00, 5.00)              # Haiku 4.5
 
 _STATIC_PRICING = {
     "claude-fable-5-1": _FABLE_5_1,
@@ -96,6 +97,7 @@ _STATIC_PRICING = {
     "claude-sonnet-4-5-20250929": _SONNET_CURRENT,
     "claude-sonnet-4-0": _SONNET_CURRENT,
     "claude-sonnet-4-20250514": _SONNET_CURRENT,
+    "claude-haiku-5-5": _HAIKU_5_5,
     "claude-haiku-4-5": _HAIKU,
     "claude-haiku-4-5-20251001": _HAIKU,
 }
